@@ -677,6 +677,32 @@ def rest_cancel(request: Request, rest: str):
     return reply(t)
 
 
+import gate
+
+
+@app.post("/v1/mailroom/actions")
+@app.post("/v1/mailroom/actions/")
+async def mailroom_actions(request: Request):
+    try:
+        body = json.loads(await request.body())
+        if not isinstance(body, dict):
+            raise ValueError("body must be a JSON object")
+    except Exception as ex:
+        return JSONResponse({"error": {"code": 400, "message": f"Invalid JSON: {ex}"}}, status_code=400)
+    try:
+        out = await run_in_threadpool(gate.handle, body)
+    except Exception as ex:
+        import traceback
+        with db() as c:
+            c.execute("INSERT INTO log VALUES(?,?,?,?,?)", (time.time(), "EXC", "gate", 500,
+                      json.dumps({"error": traceback.format_exc()[-2000:]})))
+        return JSONResponse({"error": {"code": 500, "message": repr(ex)}}, status_code=500)
+    with db() as c:
+        c.execute("INSERT INTO bodies VALUES(?,?,?)", (time.time(), "RESPONSE " + str(body.get("operation")),
+                  json.dumps(out)[:300000]))
+    return JSONResponse(out, media_type="application/json")
+
+
 # Catch-all so a different contract still gets logged (and tells us what the grader expects)
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 def catch_all(path: str):
